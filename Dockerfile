@@ -82,6 +82,7 @@ RUN apt-get update \
          ca-certificates \
          tzdata \
          curl \
+         gosu \
     && ln -sf /usr/share/zoneinfo/$TZ /etc/localtime \
     && echo $TZ > /etc/timezone \
     && rm -rf /var/lib/apt/lists/*
@@ -95,12 +96,17 @@ WORKDIR /app
 COPY app ./app
 COPY main.py ./
 
-# 非 root 用户
+# 非 root 用户（容器启动时由 entrypoint 切换到此用户）
 RUN groupadd --system --gid 1000 xiaoai \
     && useradd --system --uid 1000 --gid xiaoai --create-home --shell /sbin/nologin xiaoai \
     && mkdir -p /app/data \
-    && chown -R xiaoai:xiaoai /app
-USER xiaoai
+    && chown -R xiaoai:xiaoai /app \
+    && chmod -R u+rwX,g+rX /app
+
+# 入口脚本：启动前修复 /app/data 权限（处理 volume 挂载由 root 创建的场景），
+# 然后用 gosu 切换到 xiaoai:xiaoai 非 root 用户执行 CMD。
+COPY --chmod=755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+ENTRYPOINT ["docker-entrypoint.sh"]
 
 ENV XIAOAI_CONFIG=/app/data/config.json
 VOLUME ["/app/data"]
