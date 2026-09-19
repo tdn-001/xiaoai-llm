@@ -85,9 +85,59 @@ docker compose up -d --build
 4. **LLM 设置** 填入 API Base URL / Key / 模型 ID 并测试连接。
 5. 右上角 **应用配置** 热加载生效。
 
+### 方式三：Makefile（国内 / 境外构建一体化）
+
+仓库提供 `Makefile`，统一构建入口：
+
+```bash
+make build          # 构建 xiaoai-llm:latest（境外默认）
+make build-cn       # 构建 xiaoai-llm:cn（阿里云 apt + pip 镜像）
+make run            # docker compose up -d
+make stop           # docker compose down
+make logs           # 跟踪日志
+make rebuild        # clean + build（从零开始）
+make clean          # 停止并删除本项目所有镜像 + 清理 dangling
+make prune          # 仅清理 dangling 镜像
+```
+
+国内构建会注入 `CN_MIRROR=1` 与 `PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/`，最终 tag 为 `xiaoai-llm:cn`，与境外 `xiaoai-llm:latest` 共存。
+
 ### EdgeTTS 注意事项
 
 音箱必须能直接访问本服务拉取音频，请在 TTS 设置里把"音箱可访问的本服务地址"配置为 `http://<局域网IP>:33003`（**不要写 localhost**）。容器部署使用端口映射即可；如拉取失败可改用 `network_mode: host`。
+
+---
+
+## 镜像管理
+
+构建/清理时常见的 `docker images` 输出：
+
+| 镜像 | 含义 | 是否应保留 |
+| --- | --- | --- |
+| `xiaoai-llm:latest` / `xiaoai-llm:cn` | 本项目最终镜像 | 应保留 |
+| `python:3.12-slim` | Dockerfile 多阶段构建的 base 镜像 | **正常保留**（Docker 缓存层） |
+| `<none>:<none>` | dangling 镜像（被覆盖的旧 tag、中断的构建、buildkit 残留等） | 可清理 |
+
+清理 dangling 与缓存：
+
+```bash
+make prune         # 仅清理 dangling
+docker builder prune -af    # 清理 buildkit 缓存（释放更多空间）
+```
+
+完整清理（包括本项目所有镜像）：
+
+```bash
+make clean
+```
+
+> **为什么 `<none>:<none>` 会出现？**
+>
+> - 同一 tag 多次构建时，旧镜像会被覆盖成 `<none>`（Docker 默认行为）；
+> - 用 `docker buildx build`（含 `--check`）或指定多平台 `--platform` 时，buildkit 会在内部创建临时镜像，构建完成后部分缓存层可能以 dangling 形式保留；
+> - 构建被 Ctrl+C 中断时，部分中间层也会变 dangling。
+>
+> 这是 Docker 缓存机制，不是 bug；只要定期 `prune` 即可。
 
 ---
 
