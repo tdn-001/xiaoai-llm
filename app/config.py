@@ -4,6 +4,7 @@ import json
 import hmac
 import os
 import secrets
+import time
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -18,6 +19,7 @@ SENSITIVE_KEYS = {
     "bootstrap_token",
     "headers",
     "pass_token",
+    "password_reset_token",
 }
 
 
@@ -154,6 +156,58 @@ class ConfigStore:
             config = self._config.model_copy(deep=True)
             config.web.password_hash = password_hash
             config.web.bootstrap_token = ""
+            self.save(config)
+            return "ok"
+
+    RESET_TOKEN_TTL_SECONDS = 300  # 5 分钟
+
+    def request_password_reset(self) -> str | None:
+        """Generate a one-time password reset token.
+
+        Returns the token string. Writes it (and its expiry) into config.json.
+        Returns None if the password has not been initialized yet (nothing to
+        reset — user should run setup instead).
+        """
+        with self._lock:
+            if not self._config.web.password_hash:
+                return None
+            token = secrets.token_urlsafe(32)
+            config = self._config.model_copy(deep=True)
+            config.web.password_reset_token = token
+            config.web.password_reset_expires_at = (
+                time.time() + self.RESET_TOKEN_TTL_SECONDS
+            )
+            self.save(config)
+            return token
+
+    def confirm_password_reset(
+        self, token: str, new_password_hash: str
+    ) -> str:
+        """Verify a reset token and rotate the password hash.
+
+        Returns one of: "ok", "not_requested", "expired", "invalid",
+        "not_initialized".
+        """
+        with self._lock:
+            if not self._config.web.password_hash:
+                return "not_initialized"
+            stored = self._config.web.password_reset_token
+            expires = self._config.web.password_reset_expires_at
+            if not stored or not expires:
+                return "not_requested"
+            if time.time() > expires:
+                # 清空过期 token
+                config = self._config.model_copy(deep=True)
+                config.web.password_reset_token = ""
+                config.web.password_reset_expires_at = 0.0
+                self.save(config)
+                return "expired"
+            if not hmac.compare_digest(token, stored):
+                return "invalid"
+            config = self._config.model_copy(deep=True)
+            config.web.password_hash = new_password_hash
+            config.web.password_reset_token = ""
+            config.web.password_reset_expires_at = 0.0
             self.save(config)
             return "ok"
 

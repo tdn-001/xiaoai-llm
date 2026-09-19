@@ -12,6 +12,10 @@ class WebConfig(BaseModel):
     password_hash: str = ""
     session_secret: str = ""
     bootstrap_token: str = ""
+    # 一次性密码重置令牌（请求时生成、确认后或过期后清空）。
+    # TTL 由 app.config 中的 _RESET_TOKEN_TTL 控制（默认 5 分钟）。
+    password_reset_token: str = ""
+    password_reset_expires_at: float = 0.0
 
 
 class MijiaAccount(BaseModel):

@@ -24,6 +24,20 @@
     <input type="password" id="auth-setup-token" class="hidden" placeholder="初始化令牌（启动日志或 config.json 中查看）">
     <button id="auth-submit" class="btn primary wide">确认</button>
     <p id="auth-error" class="error"></p>
+    <div id="auth-reset-link" class="auth-reset hidden">
+      <a href="#" id="btn-show-reset">忘记密码？重置密码</a>
+    </div>
+
+    <div id="auth-reset-panel" class="auth-reset-panel hidden">
+      <h3>重置管理密码</h3>
+      <p class="muted">点击"申请重置"后请到服务端终端 / <code>docker logs</code> 查看一次性令牌（5 分钟内有效）。</p>
+      <button id="btn-request-reset" class="btn wide">申请重置</button>
+      <p id="reset-request-status" class="muted"></p>
+      <input type="text" id="auth-reset-token" placeholder="一次性令牌（从服务端日志复制）" autocomplete="off">
+      <input type="password" id="auth-reset-new" placeholder="新密码（至少 6 位）" autocomplete="new-password">
+      <button id="btn-confirm-reset" class="btn primary wide">确认重置</button>
+      <p id="auth-reset-error" class="error"></p>
+    </div>
   </div>
 </div>
 

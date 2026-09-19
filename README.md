@@ -20,6 +20,8 @@
 2. **没法在音箱上接入实时信息**：内置网络搜索（搜狗 / Bing），先把搜索资料交给大模型，再由大模型整理回答；
 3. **没有针对音箱的运维面板**：内置 Web 管理台，配置修改、热加载、日志查看、设备测试都能在一个页面完成。
 
+管理面板内置**安全接管机制**：首次启动生成随机 `bootstrap_token` 防止局域网抢占；忘记密码时可通过 Web 页面申请一次性重置令牌（写入服务端日志，不通过网络回传），详情见 [初始化令牌与重置密码](#初始化令牌与重置密码)。
+
 ### 数据流
 
 ```
@@ -200,6 +202,8 @@ xiaoai-llm/
 ```text
 GET    /health                          存活检查
 POST   /api/auth/setup | login | logout 管理端认证
+POST   /api/auth/reset-password/request          申请密码重置（生成一次性令牌，仅写入服务端日志与 config.json）
+POST   /api/auth/reset-password/confirm          用令牌 + 新密码完成重置
 GET    /api/config                      读取（脱敏）
 PUT    /api/config                      保存配置（密钥保留）
 POST   /api/config/validate | apply    校验 / 热加载
@@ -236,10 +240,65 @@ GET    /api/status                      运行状态
 
 ## 安全说明
 
-- 首次初始化必须同时提供随机 `bootstrap_token`，防止局域网内其他人抢先接管管理端；初始化后令牌立即失效。
+- 首次初始化必须同时提供随机 `bootstrap_token`，防止局域网内其他人抢先接管管理端；初始化后令牌立即失效。详见下文 [初始化令牌与重置密码](#初始化令牌与重置密码)。
 - 管理台仅提供单密码保护，请只在可信局域网暴露；不要直接映射公网。
 - `config.json` 与 `data/mi-token.json` 包含敏感凭据（权限 `0600`），请妥善备份与保护；仓库内**不会**包含任何凭据。
 - 网络搜索结果按不可信资料处理（Prompt 层注入防护）；`web_fetch` 只允许公网 HTTP(S) 地址，并阻止本机、内网和链路本地地址。
+- 密码重置流程也通过本地一次性令牌实现；令牌仅写入服务端日志和 `config.json`（不通过网络回传），TTL 5 分钟，使用后立即失效。
+
+---
+
+## 初始化令牌与重置密码
+
+### 初始化令牌（bootstrap_token）
+
+`bootstrap_token` 是管理台**首次接管凭证**，防止局域网内其他人抢先设置管理密码：
+
+- 服务首次启动且 `config.json` 中无 `password_hash` 时，自动生成随机 `bootstrap_token`（18 字节 URL-safe，约 144 位熵）和 `session_secret`。
+- 浏览器首次访问 `http://<主机IP>:33003` 进入"设置管理密码"页面，必须同时输入 `bootstrap_token` 才会被接受。
+- 初始化成功后 `bootstrap_token` **立即清空**（写入 `config.json` 的对应字段为空字符串），任何人（包括你）都无法再用它绕过密码登录。
+
+查看令牌的三种方式：
+
+```bash
+# 1. 启动日志（推荐）
+.venv/bin/python main.py            # 直接看终端
+docker compose logs xiaoai-llm      # Docker 部署
+docker compose -f docker-compose.cn.yml logs xiaoai-llm   # 国内版
+# 查找关键字：首次初始化令牌 bootstrap_token=...
+
+# 2. 配置文件（首次启动后会有值）
+cat config.json | python3 -c "import json,sys; print(json.load(sys.stdin)['web']['bootstrap_token'])"
+
+# 3. Docker 部署：登录容器查看
+docker exec xiaoai-llm cat /app/data/config.json
+```
+
+### 忘记管理密码？重置密码流程
+
+如果丢失了管理密码（但仍能物理访问服务器），可以通过"重置密码"功能生成新的管理密码：
+
+1. **打开登录页面**，点击底部"忘记密码？重置密码"。
+2. **点击「申请重置」**，服务端生成一次性令牌（32 字节 URL-safe 随机串），仅写入：
+   - **服务端日志**（`xiaoai.security` logger，醒目输出 + `=====` 分隔线）
+   - **`config.json`** 的 `web.password_reset_token` 字段 + `web.password_reset_expires_at` 时间戳
+3. **查看令牌**（在 5 分钟内）：
+   ```bash
+   # 直接看服务终端 / docker logs
+   docker compose logs -f xiaoai-llm 2>&1 | grep "reset_token="
+   # 或读 config.json
+   python3 -c "import json; print(json.load(open('data/config.json'))['web']['password_reset_token'])"
+   ```
+4. **在 Web 表单里输入令牌 + 新密码**，点「确认重置」。成功后令牌立即清空，旧密码失效。
+5. **用新密码登录**。
+
+安全要点：
+
+- 令牌 **TTL 5 分钟**，过期自动清空，需要重新申请。
+- 每次"申请重置"会覆盖之前的令牌（旧令牌立即失效）。
+- 重置请求和确认均有限速（每 IP 每小时 10 次），防止暴力枚举。
+- 令牌永**不回传到 Web 前端**（接口响应只返回"已生成"），必须由用户到服务端查看。
+- `/api/config` 接口响应里 `password_reset_token` 字段始终脱敏为空（仅显示 `password_reset_token_configured: true`）。
 
 ---
 

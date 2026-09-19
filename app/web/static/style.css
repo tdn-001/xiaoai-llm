@@ -249,6 +249,33 @@ th { color: var(--muted); font-weight: 600; }
 .auth-card h1 { font-size: 1.25em; margin: 0 0 6px; }
 .auth-card input { margin: 14px 0 10px; }
 
+.auth-reset {
+  margin-top: 14px;
+  text-align: center;
+}
+.auth-reset a {
+  color: var(--accent, #ff7a45);
+  text-decoration: none;
+  font-size: 0.92em;
+}
+.auth-reset a:hover { text-decoration: underline; }
+
+.auth-reset-panel {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--line);
+}
+.auth-reset-panel h3 {
+  margin: 0 0 6px;
+  font-size: 1em;
+  color: var(--muted);
+}
+.auth-reset-panel .muted {
+  font-size: 0.85em;
+  line-height: 1.5;
+}
+.auth-reset-panel input { margin: 8px 0; }
+
 @media (max-width: 760px) {
   .layout { flex-direction: column; }
   .sidenav {

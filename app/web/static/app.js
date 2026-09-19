@@ -66,6 +66,11 @@ function showAuth(mode) {
   $("#auth-submit").textContent = mode === "setup" ? "设置并进入" : "登录";
   $("#auth-submit").dataset.mode = mode;
   $("#auth-setup-token").classList.toggle("hidden", mode !== "setup");
+  // 仅登录模式显示"忘记密码"入口；setup 模式下未设置密码，应直接走 setup 流程
+  $("#auth-reset-link").classList.toggle("hidden", mode !== "login");
+  $("#auth-reset-panel").classList.add("hidden");
+  $("#auth-reset-error").textContent = "";
+  $("#reset-request-status").textContent = "";
 }
 
 async function submitAuth() {
@@ -85,6 +90,49 @@ async function submitAuth() {
     await enterApp();
   } catch (err) {
     $("#auth-error").textContent = err.message;
+  }
+}
+
+async function requestPasswordReset() {
+  $("#auth-reset-error").textContent = "";
+  $("#reset-request-status").textContent = "申请中…";
+  try {
+    const res = await POST("/api/auth/reset-password/request", {});
+    $("#reset-request-status").textContent = res.message || "请到服务端日志查看令牌";
+  } catch (err) {
+    $("#reset-request-status").textContent = "";
+    $("#auth-reset-error").textContent = err.message;
+  }
+}
+
+async function confirmPasswordReset() {
+  $("#auth-reset-error").textContent = "";
+  const token = $("#auth-reset-token").value.trim();
+  const newPassword = $("#auth-reset-new").value;
+  if (!token) {
+    $("#auth-reset-error").textContent = "请输入一次性令牌";
+    return;
+  }
+  if (newPassword.length < 6) {
+    $("#auth-reset-error").textContent = "新密码至少 6 位";
+    return;
+  }
+  try {
+    await POST("/api/auth/reset-password/confirm", {
+      token,
+      new_password: newPassword,
+    });
+    $("#auth-reset-token").value = "";
+    $("#auth-reset-new").value = "";
+    $("#auth-reset-panel").classList.add("hidden");
+    $("#reset-request-status").textContent = "";
+    $("#auth-error").textContent = "";
+    // 切回登录模式让用户用新密码登录
+    showAuth("login");
+    $("#auth-hint").textContent = "密码已重置，请使用新密码登录。";
+    toast("密码已重置，请用新密码登录", "success");
+  } catch (err) {
+    $("#auth-reset-error").textContent = err.message;
   }
 }
 
@@ -881,6 +929,15 @@ async function pullLogs() {
 function bindEvents() {
   $("#auth-submit").addEventListener("click", submitAuth);
   $("#auth-password").addEventListener("keydown", (e) => e.key === "Enter" && submitAuth());
+  $("#btn-show-reset").addEventListener("click", (e) => {
+    e.preventDefault();
+    $("#auth-reset-panel").classList.toggle("hidden");
+    $("#auth-reset-error").textContent = "";
+  });
+  $("#btn-request-reset").addEventListener("click", requestPasswordReset);
+  $("#btn-confirm-reset").addEventListener("click", confirmPasswordReset);
+  $("#auth-reset-token").addEventListener("keydown", (e) => e.key === "Enter" && confirmPasswordReset());
+  $("#auth-reset-new").addEventListener("keydown", (e) => e.key === "Enter" && confirmPasswordReset());
   $("#btn-logout").addEventListener("click", async (e) => {
     e.preventDefault();
     await POST("/api/auth/logout");

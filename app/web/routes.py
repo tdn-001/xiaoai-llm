@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import time
 from pathlib import Path
@@ -30,6 +31,11 @@ AUDIO_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+\.mp3$")
 class PasswordBody(BaseModel):
     password: str = Field(min_length=6, max_length=128)
     setup_token: str = ""
+
+
+class PasswordResetBody(BaseModel):
+    token: str = Field(min_length=8, max_length=512)
+    new_password: str = Field(min_length=6, max_length=128)
 
 
 class ConfigBody(BaseModel):
@@ -91,11 +97,11 @@ def build_api_router(config_store: ConfigStore, runtime: RuntimeManager) -> tupl
     # ------------------------------------------------------------------ auth
     _attempts: dict[str, list[float]] = {}
 
-    def _rate_limit(request: Request) -> None:
-        key = request.client.host if request.client else "unknown"
+    def _rate_limit(request: Request, action: str = "default") -> None:
+        key = f"{action}:{request.client.host if request.client else 'unknown'}"
         now = time.time()
-        recent = [t for t in _attempts.get(key, []) if now - t < 60]
-        if len(recent) >= 5:
+        recent = [t for t in _attempts.get(key, []) if now - t < 3600]
+        if len(recent) >= 10:
             raise HTTPException(http_status.HTTP_429_TOO_MANY_REQUESTS, "尝试过于频繁，请稍后再试")
         recent.append(now)
         _attempts[key] = recent
@@ -140,6 +146,65 @@ def build_api_router(config_store: ConfigStore, runtime: RuntimeManager) -> tupl
     async def auth_logout(response: Response) -> dict[str, str]:
         response.delete_cookie(COOKIE_NAME)
         return {"message": "已退出"}
+
+    @public.post("/api/auth/reset-password/request")
+    async def auth_reset_request(request: Request) -> dict[str, str]:
+        """请求重置管理密码：生成一次性令牌并写入日志。
+
+        无需登录；响应只返回"已生成"，令牌写入服务端日志与 config.json，
+        用户需到服务器查看令牌（5 分钟内有效）。
+        """
+        _rate_limit(request, action="reset_request")
+        token = config_store.request_password_reset()
+        if token is None:
+            raise HTTPException(
+                http_status.HTTP_428_PRECONDITION_REQUIRED,
+                "尚未设置管理密码，请用初始化令牌完成首次设置",
+            )
+        # 醒目日志输出，方便用户从终端 / docker logs 复制令牌
+        logging.getLogger("xiaoai.security").warning(
+            "=" * 60
+        )
+        logging.getLogger("xiaoai.security").warning(
+            "[!!! SECURITY !!!] 重置密码令牌 reset_token=%s（5 分钟内有效，请妥善保管）",
+            token,
+        )
+        logging.getLogger("xiaoai.security").warning(
+            "=" * 60
+        )
+        return {
+            "message": (
+                "重置令牌已生成。请到服务端日志（或 config.json 中 "
+                "web.password_reset_token 字段）查看，5 分钟内有效。"
+            )
+        }
+
+    @public.post("/api/auth/reset-password/confirm")
+    async def auth_reset_confirm(body: PasswordResetBody, request: Request) -> dict[str, str]:
+        """使用一次性令牌 + 新密码完成重置。"""
+        from app.auth import hash_password
+
+        _rate_limit(request, action="reset_confirm")
+        result = config_store.confirm_password_reset(
+            body.token, hash_password(body.new_password)
+        )
+        if result == "ok":
+            return {"message": "密码已重置，请使用新密码登录"}
+        if result == "not_initialized":
+            raise HTTPException(
+                http_status.HTTP_428_PRECONDITION_REQUIRED,
+                "尚未初始化管理密码",
+            )
+        if result == "not_requested":
+            raise HTTPException(
+                http_status.HTTP_400_BAD_REQUEST,
+                "未申请过密码重置，请先调用重置请求接口",
+            )
+        if result == "expired":
+            raise HTTPException(
+                http_status.HTTP_400_BAD_REQUEST, "重置令牌已过期，请重新申请"
+            )
+        raise HTTPException(http_status.HTTP_403_FORBIDDEN, "重置令牌错误")
 
     # ---------------------------------------------------------------- config
     def _validated_from_body(body: dict[str, Any]) -> AppConfig:
