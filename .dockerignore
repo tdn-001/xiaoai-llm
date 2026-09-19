@@ -1,9 +1,33 @@
 .git
+.gitignore
+.dockerignore
+.docker
 .venv
 __pycache__
 *.pyc
+*.pyo
+*.pyd
 .pytest_cache
-data
-config.json
-tests
+.ruff_cache
+.mypy_cache
 *.egg-info
+build
+dist
+
+# 凭据与运行时数据
+config.json
+data
+*.log
+nohup.out
+
+# 测试与本地产物
+tests
+xiaoai-llm-需求文档.txt
+
+# 编辑器
+.idea
+.vscode
+.DS_Store
+Thumbs.db
+*.swp
+*.swo

@@ -1,0 +1,18 @@
+# 国内用户专用：叠加在 docker-compose.yml 之上
+#
+# 用法：
+#   docker compose -f docker-compose.yml -f docker-compose.cn.yml up -d --build
+#
+# 切换内容：
+#   - apt 镜像 → mirrors.aliyun.com（通过 CN_MIRROR=1）
+#   - pip 源   → mirrors.aliyun.com/pypi/simple/
+#   - 镜像 tag → xiaoai-llm:cn（与境外 latest 区分，可并存）
+
+services:
+  xiaoai-llm:
+    build:
+      args:
+        CN_MIRROR: "1"
+        PIP_INDEX_URL: https://mirrors.aliyun.com/pypi/simple/
+    image: xiaoai-llm:cn
+    container_name: xiaoai-llm-cn
