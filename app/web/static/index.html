@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>xiaoai-llm 管理台</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="brand-mark">●</span> xiaoai-llm <small>小爱音箱大模型网关</small></div>
+  <div class="top-status">
+    <span id="status-dot" class="dot dot-off" title="运行状态"></span>
+    <span id="status-text">加载中…</span>
+    <button id="btn-apply" class="btn primary">应用配置</button>
+  </div>
+</header>
+
+<div id="auth-screen" class="auth-wrap hidden">
+  <div class="auth-card">
+    <h1 id="auth-title">设置管理密码</h1>
+    <p class="muted" id="auth-hint">首次使用请为管理页面设置访问密码。</p>
+    <input type="password" id="auth-password" placeholder="管理密码（至少 6 位）" autocomplete="current-password">
+    <input type="password" id="auth-setup-token" class="hidden" placeholder="初始化令牌（启动日志或 config.json 中查看）">
+    <button id="auth-submit" class="btn primary wide">确认</button>
+    <p id="auth-error" class="error"></p>
+  </div>
+</div>
+
+<div id="app" class="layout hidden">
+  <nav class="sidenav" id="nav">
+    <a href="#/overview" data-nav="overview">配置总览</a>
+    <a href="#/account" data-nav="account">米家账号</a>
+    <a href="#/devices" data-nav="devices">设备管理</a>
+    <a href="#/llm" data-nav="llm">LLM 设置</a>
+    <a href="#/persona" data-nav="persona">人设配置</a>
+    <a href="#/tts" data-nav="tts">TTS 设置</a>
+    <a href="#/web-search" data-nav="web-search">网络搜索</a>
+    <a href="#/logs" data-nav="logs">日志面板</a>
+    <a href="#" id="btn-logout">退出登录</a>
+  </nav>
+
+  <main class="content">
+
+  <section data-screen="overview" class="screen hidden">
+    <h2>配置总览</h2>
+    <div class="cards" id="overview-cards"></div>
+    <div class="card">
+      <h3>设备运行状态</h3>
+      <div id="overview-devices" class="table-wrap"></div>
+    </div>
+  </section>
+
+  <section data-screen="account" class="screen hidden">
+    <h2>米家账号</h2>
+    <div class="card">
+      <h3>已添加账号</h3>
+      <p class="muted">可同时登录多个小米账号；设备绑定时会关联到选中的账号。</p>
+      <div id="mijia-accounts" class="account-list"><p class="muted">加载中…</p></div>
+      <div class="btn-row">
+        <button id="btn-add-account" class="btn">新增账号</button>
+        <button id="btn-refresh-accounts" class="btn">刷新状态</button>
+      </div>
+    </div>
+    <div class="card hidden" id="account-form-card">
+      <h3 id="account-form-title">新增账号</h3>
+      <div class="form-grid">
+        <label>账号备注名<input id="acct-name" type="text" placeholder="家里 / 父母家 / 公司…"></label>
+        <label>账号 ID（留空自动生成）<input id="acct-id" type="text" placeholder="home / parents"></label>
+        <label>登录方式
+          <select id="acct-login-type">
+            <option value="pass_token">passToken</option>
+            <option value="password">账号密码</option>
+          </select>
+        </label>
+        <label>账号地区
+          <select id="acct-region">
+            <option value="cn">中国大陆</option>
+            <option value="de">德国</option>
+            <option value="us">美国</option>
+            <option value="sg">新加坡</option>
+          </select>
+        </label>
+      </div>
+      <div class="form-grid hidden" id="acct-password-fields">
+        <label>小米账号（手机号 / 邮箱 / 小米 ID）<input id="acct-username" type="text" autocomplete="off"></label>
+        <label>密码<input id="acct-password" type="password" autocomplete="new-password"></label>
+      </div>
+      <div class="form-grid" id="acct-passtoken-fields">
+        <label>userId（小米 ID，纯数字）<input id="acct-user-id" type="text" placeholder="例如 1234567890"></label>
+        <label>passToken<input id="acct-pass-token" type="password" autocomplete="new-password"></label>
+      </div>
+      <div class="btn-row">
+        <button id="btn-save-account" class="btn primary">保存账号</button>
+        <button id="btn-cancel-account" class="btn">取消</button>
+      </div>
+    </div>
+  </section>
+
+  <section data-screen="devices" class="screen hidden">
+    <h2>设备管理</h2>
+    <div class="card">
+      <h3>账号下的音箱</h3>
+      <p class="muted">选择一个账号加载该账号下的音箱；勾选后点击“保存绑定”，这些设备即与该账号关联。</p>
+      <div class="form-grid">
+        <label>选择米家账号
+          <select id="device-account-id"></select>
+        </label>
+      </div>
+      <div id="discover-list" class="device-list"><p class="muted">请先选择一个账号。</p></div>
+      <div class="btn-row">
+        <button id="btn-refresh-devices" class="btn">刷新设备</button>
+        <button id="btn-save-bindings" class="btn primary">保存绑定</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3>云端问句监听频率</h3>
+      <p class="muted">非刷机方案没有本地唤醒事件。空闲时默认走轻量 HTTPS 对话接口（不调用 UBus），命中唤醒词后才通过 UBus 下发 mute/TTS。</p>
+      <div class="form-grid">
+        <label>空闲轮询数据源
+          <select id="listen-source">
+            <option value="userprofile">HTTPS 对话接口（不占用 UBus）</option>
+            <option value="ubus">UBus nlp_result_get（设备级）</option>
+          </select>
+        </label>
+        <label>对话接口失败时回退 UBus
+          <select id="listen-fallback"><option value="true">开启</option><option value="false">关闭</option></select>
+        </label>
+        <label>命中后读取原生回答（消耗 UBus）
+          <select id="listen-native-answer"><option value="false">关闭</option><option value="true">开启</option></select>
+        </label>
+        <label>空闲轮询间隔（秒）<input id="listen-idle-interval" type="number" min="3" max="300"></label>
+        <label>活跃轮询间隔（秒）<input id="listen-active-interval" type="number" min="1" max="30"></label>
+        <label>活跃窗口（秒）<input id="listen-active-window" type="number" min="10" max="600"></label>
+        <label>错误退避上限（秒）<input id="listen-max-backoff" type="number" min="5" max="600"></label>
+      </div>
+      <p class="muted">默认：空闲 10 秒一次（HTTPS 对话接口）；发现新问句后 60 秒内每 2 秒一次；命中唤醒词后调用 UBus mute，可选读取原生回答。间隔越长，请求越少，但 AI 响应越慢。</p>
+      <div class="btn-row"><button id="btn-save-listener" class="btn primary">保存并应用监听设置</button></div>
+    </div>
+    <div class="card">
+      <h3>已绑定设备配置</h3>
+      <div id="bound-devices"></div>
+    </div>
+  </section>
+
+  <section data-screen="llm" class="screen hidden">
+    <h2>LLM 设置</h2>
+    <div class="card">
+      <h3>预设列表</h3>
+      <p class="muted">支持任意 OpenAI 兼容接口（OpenAI / DeepSeek / 通义 / 智谱 / Kimi 等）。每台设备可选择不同预设。</p>
+      <div id="llm-profiles"></div>
+      <div class="btn-row">
+        <button id="btn-add-profile" class="btn">新增预设</button>
+        <button id="btn-save-llm" class="btn primary">保存 LLM 配置</button>
+      </div>
+    </div>
+  </section>
+
+  <section data-screen="persona" class="screen hidden">
+    <h2>人设配置</h2>
+    <div class="card">
+      <h3>全局默认人设</h3>
+      <label>预设模板
+        <select id="persona-template">
+          <option value="">— 选择模板填充 —</option>
+          <option value="generic">通用助手</option>
+          <option value="study">学习辅导</option>
+          <option value="funny">幽默朋友</option>
+          <option value="kid">儿童友好</option>
+          <option value="work">职场顾问</option>
+        </select>
+      </label>
+      <textarea id="persona-text" rows="8" placeholder="你是一个友善、准确的语音助手…"></textarea>
+      <p class="muted">设备可在“设备管理”中单独覆盖人设。回答会以语音播报，请避免要求输出表格或链接。</p>
+      <div class="btn-row"><button id="btn-save-persona" class="btn primary">保存人设</button></div>
+    </div>
+  </section>
+
+  <section data-screen="tts" class="screen hidden">
+    <h2>TTS 设置</h2>
+    <div class="card">
+      <h3>全局播报设置</h3>
+      <div class="form-grid">
+        <label>默认播报方式
+          <select id="tts-provider">
+            <option value="mijia">米家自带 TTS</option>
+            <option value="edge_tts">EdgeTTS</option>
+          </select>
+        </label>
+        <label>EdgeTTS 音色
+          <input id="tts-edge-voice" list="edge-voices" placeholder="zh-CN-XiaoxiaoNeural">
+          <datalist id="edge-voices">
+            <option value="zh-CN-XiaoxiaoNeural"></option>
+            <option value="zh-CN-YunxiNeural"></option>
+            <option value="zh-CN-YunyangNeural"></option>
+            <option value="zh-CN-XiaoyiNeural"></option>
+            <option value="zh-CN-liaoning-XiaobeiNeural"></option>
+            <option value="zh-TW-HsiaoChenNeural"></option>
+          </datalist>
+        </label>
+        <label>EdgeTTS 生成超时（秒）<input id="tts-timeout" type="number" min="5" max="120"></label>
+        <label>失败时降级到米家 TTS
+          <select id="tts-fallback"><option value="true">开启</option><option value="false">关闭</option></select>
+        </label>
+        <label>LLM 失败提示语<input id="tts-error-message" type="text"></label>
+        <label>唤醒后提示语（如"让我想想"，留空则不播报）
+          <input id="tts-thinking-message" type="text" placeholder="让我想想">
+        </label>
+        <label>音箱可访问的本服务地址（EdgeTTS 必填）
+          <input id="web-public-base-url" placeholder="http://192.168.1.10:33003">
+        </label>
+      </div>
+      <div class="btn-row"><button id="btn-save-tts" class="btn primary">保存 TTS 配置</button></div>
+    </div>
+  </section>
+
+  <section data-screen="web-search" class="screen hidden">
+    <h2>网络搜索</h2>
+    <div class="card">
+      <h3>web_search + web_fetch</h3>
+      <p class="muted">先通过搜索服务获取网页结果，再抓取前几条网页正文作为大模型参考资料。设备需要在“设备管理”中单独开启网络搜索；失败时自动降级为普通回答。</p>
+      <div class="form-grid">
+        <label>启用网络搜索服务
+          <select id="web-search-enabled"><option value="false">关闭</option><option value="true">开启</option></select>
+        </label>
+        <label>搜索服务 URL<input id="web-search-url" placeholder="https://www.sogou.com/web"></label>
+        <label>搜索结果数量<input id="web-search-max-results" type="number" min="1" max="10"></label>
+        <label>抓取正文数量<input id="web-fetch-top-results" type="number" min="0" max="5"></label>
+        <label>请求超时（秒）<input id="web-search-timeout" type="number" min="3" max="60"></label>
+        <label>单页最大字符数<input id="web-fetch-max-chars" type="number" min="500" max="20000"></label>
+        <label>注入资料最大字符数<input id="web-search-max-chars" type="number" min="500" max="50000"></label>
+      </div>
+      <div class="btn-row">
+        <input id="web-search-test-query" type="text" placeholder="测试查询，默认：今天北京的天气">
+        <button id="btn-save-web-search" class="btn primary">保存网络搜索配置</button>
+        <button id="btn-test-web-search" class="btn">测试搜索与抓取</button>
+      </div>
+    </div>
+  </section>
+
+  <section data-screen="logs" class="screen hidden">
+    <h2>日志面板</h2>
+    <div class="card">
+      <div class="btn-row">
+        <select id="log-level"><option value="">全部</option><option value="INFO">INFO</option><option value="WARNING">WARNING</option><option value="ERROR">ERROR</option></select>
+        <label class="inline"><input type="checkbox" id="log-follow" checked> 自动滚动</label>
+        <button id="btn-clear-logs" class="btn danger">清空日志</button>
+      </div>
+      <div id="log-view" class="log-view"></div>
+    </div>
+  </section>
+
+  </main>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+<script src="/app.js"></script>
+</body>
+</html>

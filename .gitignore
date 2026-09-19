@@ -1,0 +1,31 @@
+# Byte-compiled / cache
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Build / packaging artifacts
+*.egg-info/
+build/
+dist/
+
+# Runtime data — credentials, tokens, logs
+config.json
+data/
+nohup.out
+*.log
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Project-local private notes
+xiaoai-llm-需求文档.txt

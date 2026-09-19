@@ -1,0 +1,33 @@
+[project]
+name = "xiaoai-llm"
+version = "0.1.0"
+description = "Local LLM gateway for Xiaomi AI speakers"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "aiohttp==3.12.15",
+  "edge-tts==7.2.3",
+  "fastapi==0.116.1",
+  "httpx==0.28.1",
+  "miservice-fork==2.9.3",
+  "openai==1.107.2",
+  "pydantic==2.11.7",
+  "uvicorn[standard]==0.35.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==8.4.2",
+  "pytest-asyncio==1.1.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[build-system]
+requires = ["setuptools>=78"]
+build-backend = "setuptools.build_meta"

@@ -1,0 +1,8 @@
+aiohttp==3.12.15
+edge-tts==7.2.3
+fastapi==0.116.1
+httpx==0.28.1
+miservice-fork==2.9.3
+openai==1.107.2
+pydantic==2.11.7
+uvicorn[standard]==0.35.0

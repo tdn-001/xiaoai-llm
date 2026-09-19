@@ -1,0 +1,14 @@
+services:
+  xiaoai-llm:
+    build: .
+    image: xiaoai-llm:latest
+    container_name: xiaoai-llm
+    restart: unless-stopped
+    ports:
+      - "33003:33003"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - XIAOAI_CONFIG=/app/data/config.json
+    # 若音箱无法通过网桥地址拉取 EdgeTTS 音频，可改用 host 网络：
+    # network_mode: host

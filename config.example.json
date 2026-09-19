@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "web": {
+    "host": "0.0.0.0",
+    "port": 33003,
+    "public_base_url": "http://192.168.1.10:33003",
+    "password_hash": "",
+    "session_secret": "",
+    "bootstrap_token": ""
+  },
+  "mijia": {
+    "login_type": "password",
+    "username": "",
+    "password": "",
+    "user_id": "",
+    "pass_token": "",
+    "region": "cn",
+    "token_path": "data/mi-token.json",
+    "selected_devices": [],
+    "poll_source": "userprofile",
+    "poll_fallback_to_ubus": true,
+    "fetch_native_answer": false,
+    "poll_interval_seconds": 2.0,
+    "idle_poll_interval_seconds": 10.0,
+    "active_window_seconds": 60.0,
+    "max_backoff_seconds": 60.0
+  },
+  "mijia_accounts": [],
+  "defaults": {
+    "wake_words": ["AI助手", "问AI"],
+    "wake_word_mode": "prefix",
+    "llm_profile_id": "default",
+    "persona": "你是一个友善、准确的语音助手。请使用适合直接播报的简洁中文回答，不要使用 Markdown 表格，也不要读出网址。",
+    "tts_provider": "mijia",
+    "context_enabled": true,
+    "web_search_enabled": false,
+    "session_timeout_minutes": 30,
+    "max_context_tokens": 4096
+  },
+  "tts": {
+    "default_provider": "mijia",
+    "edge_voice": "zh-CN-XiaoxiaoNeural",
+    "timeout_seconds": 30,
+    "fallback_to_mijia": true,
+    "error_message": "网络异常，请稍后再试"
+  },
+  "web_search": {
+    "enabled": false,
+    "search_url": "https://www.sogou.com/web",
+    "max_results": 5,
+    "fetch_top_results": 2,
+    "timeout_seconds": 15,
+    "max_page_chars": 6000,
+    "max_result_chars": 12000
+  },
+  "llm_profiles": [
+    {
+      "id": "default",
+      "name": "默认模型",
+      "api_base": "https://api.openai.com/v1",
+      "api_key": "",
+      "model": "gpt-4o-mini",
+      "timeout_seconds": 200,
+      "stream": false,
+      "temperature": 0.7,
+      "top_p": 1.0,
+      "max_output_tokens": 800,
+      "extra_body": {}
+    }
+  ],
+  "devices": {}
+}
