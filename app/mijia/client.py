@@ -96,19 +96,21 @@ class StableMiAccount(MiAccount):
                     "hash": hashlib.md5(self.password.encode()).hexdigest().upper(),
                 }
                 response = await self._serviceLogin("serviceLoginAuth2", data)
+                # Check for verification even when code == 0 — Xiaomi may
+                # return code:0 with notificationUrl + empty location.
+                ver_type = _detect_verification_type(response)
+                if ver_type or (not response.get("location") and response.get("notificationUrl")):
+                    self._pending_sid = sid
+                    self._pending_login_data = data
+                    self._pending_response = response
+                    raise LoginVerificationRequired(
+                        ver_type=ver_type or "sms",
+                        captcha_url=response.get("captchaUrl") or "",
+                        notification_url=response.get("notificationUrl") or "",
+                        sid=sid,
+                        response=response,
+                    )
                 if response["code"] != 0:
-                    ver_type = _detect_verification_type(response)
-                    if ver_type:
-                        self._pending_sid = sid
-                        self._pending_login_data = data
-                        self._pending_response = response
-                        raise LoginVerificationRequired(
-                            ver_type=ver_type,
-                            captcha_url=response.get("captchaUrl") or "",
-                            notification_url=response.get("notificationUrl") or "",
-                            sid=sid,
-                            response=response,
-                        )
                     raise RuntimeError(
                         f"小米登录失败: {response.get('description', '未知错误')}"
                     )
@@ -313,7 +315,7 @@ class MijiaClient:
         if not self.account or not isinstance(self.account, StableMiAccount):
             raise RuntimeError("没有待处理的登录会话，请重新发起登录")
         try:
-            await self.account.submit_captcha(code)
+            success = await self.account.submit_captcha(code)
         except LoginVerificationRequired as exc:
             self._pending_verification = {
                 "ver_type": exc.ver_type,
@@ -322,6 +324,8 @@ class MijiaClient:
                 "sid": exc.sid,
             }
             raise
+        if not success:
+            raise RuntimeError("验证码验证失败，请检查验证码是否正确")
         creds = self._last_credentials
         if creds and creds.login_type == "pass_token":
             token = getattr(self.account, "token", None)
@@ -338,7 +342,9 @@ class MijiaClient:
     async def submit_notification(self) -> MijiaAccount:
         if not self.account or not isinstance(self.account, StableMiAccount):
             raise RuntimeError("没有待处理的登录会话，请重新发起登录")
-        await self.account.submit_notification()
+        success = await self.account.submit_notification()
+        if not success:
+            raise RuntimeError("通知验证登录失败：请确保已在浏览器中完成验证后再试")
         creds = self._last_credentials
         if creds and creds.login_type == "pass_token":
             token = getattr(self.account, "token", None)
