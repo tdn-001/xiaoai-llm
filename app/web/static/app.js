@@ -749,8 +749,7 @@ async function renderBoundDevices() {
           </label>
           <label>EdgeTTS 音色（留空=全局）<input data-f="edge_voice" value="${escapeHtml(o.edge_voice || "")}" placeholder="zh-CN-XiaoxiaoNeural"></label>
           <label>播报语速（留空=全局）
-            <input data-f="speed" type="range" min="0.5" max="2.0" step="0.1" value="${o.speed ?? 1.0}">
-            <span>${(o.speed ?? 1.0).toFixed(1)}x</span>
+            <select data-f="speed"><option value="">继承全局（${(cfg.tts.speed ?? 1.0).toFixed(1)}x）</option><option value="0.5" ${o.speed === 0.5 ? "selected" : ""}>0.5x 慢速</option><option value="0.7" ${o.speed === 0.7 ? "selected" : ""}>0.7x</option><option value="0.8" ${o.speed === 0.8 ? "selected" : ""}>0.8x 稍慢</option><option value="1.0" ${o.speed === 1.0 ? "selected" : ""}>1.0x 正常</option><option value="1.2" ${o.speed === 1.2 ? "selected" : ""}>1.2x 稍快</option><option value="1.5" ${o.speed === 1.5 ? "selected" : ""}>1.5x</option><option value="2.0" ${o.speed === 2.0 ? "selected" : ""}>2.0x 快速</option></select>
           </label>
           <label>唤醒词（留空=全局，逗号分隔）<input data-f="wake_words" value="${escapeHtml((o.wake_words || []).join(","))}" placeholder="AI助手,问AI"></label>
           <label>唤醒词匹配（留空=全局）
@@ -787,12 +786,6 @@ async function renderBoundDevices() {
     $$("[data-f]", card).forEach((input) => {
       input.addEventListener("change", () => collectDeviceOverride(card, did));
       if (input.tagName === "TEXTAREA") input.addEventListener("input", () => collectDeviceOverride(card, did));
-      if (input.dataset.f === "speed") {
-        input.addEventListener("input", () => {
-          const span = input.nextElementSibling;
-          if (span) span.textContent = `${Number(input.value).toFixed(1)}x`;
-        });
-      }
     });
     $$("[data-act]", card).forEach((btn) => btn.addEventListener("click", () => deviceAction(card, did, btn.dataset.act)));
   });
