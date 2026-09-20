@@ -20,7 +20,7 @@ from app.auth import (
 )
 from app.config import ConfigStore, merge_secret_fields
 from app.logging_store import memory_logs
-from app.mijia.client import MijiaClient
+from app.mijia.client import LoginVerificationRequired, MijiaClient
 from app.mijia.compatibility import MODELS, get_model
 from app.models import AppConfig, DeviceOverride, MijiaAccount
 from app.runtime import RuntimeManager
@@ -52,6 +52,10 @@ class MijiaLoginBody(BaseModel):
     user_id: str | None = None
     pass_token: str | None = None
     region: str | None = None
+
+
+class VerificationBody(BaseModel):
+    code: str = Field(min_length=1, max_length=20)
 
 
 class MijiaAccountBody(BaseModel):
@@ -353,6 +357,14 @@ def build_api_router(config_store: ConfigStore, runtime: RuntimeManager) -> tupl
         runtime._mijia_clients[account_id] = client
         try:
             await client.login(acct)
+        except LoginVerificationRequired as exc:
+            config_store.save(config)
+            return {
+                "verification_required": True,
+                "ver_type": exc.ver_type,
+                "captcha_url": exc.captcha_url,
+                "notification_url": exc.notification_url,
+            }
         except Exception as exc:
             config_store.save(config)
             runtime.mark_needs_relogin(account_id)
@@ -361,6 +373,60 @@ def build_api_router(config_store: ConfigStore, runtime: RuntimeManager) -> tupl
         runtime._needs_relogin.discard(account_id)
         await runtime.rebuild_workers()
         return {"message": "登录成功", "authenticated": True}
+
+    @protected.post("/api/mijia/accounts/{account_id}/verify/captcha")
+    async def submit_captcha_code(account_id: str, body: VerificationBody) -> dict[str, Any]:
+        config = config_store.value
+        client = runtime.mijia_client(account_id)
+        if not client:
+            raise HTTPException(http_status.HTTP_400_BAD_REQUEST, "没有待处理的登录会话")
+        try:
+            await client.submit_captcha(body.code)
+        except LoginVerificationRequired as exc:
+            return {
+                "verification_required": True,
+                "ver_type": exc.ver_type,
+                "captcha_url": exc.captcha_url,
+                "notification_url": exc.notification_url,
+            }
+        except Exception as exc:
+            runtime.mark_needs_relogin(account_id)
+            raise HTTPException(http_status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+        idx = next((i for i, a in enumerate(config.mijia_accounts) if a.id == account_id), None)
+        if idx is not None:
+            config_store.save(config)
+        runtime._needs_relogin.discard(account_id)
+        await runtime.rebuild_workers()
+        return {"message": "验证码登录成功", "authenticated": True}
+
+    @protected.get("/api/mijia/accounts/{account_id}/verify/captcha-image")
+    async def get_captcha_image(account_id: str) -> Response:
+        client = runtime.mijia_client(account_id)
+        if not client:
+            raise HTTPException(http_status.HTTP_400_BAD_REQUEST, "没有待处理的登录会话")
+        try:
+            image_bytes = await client.fetch_captcha_image()
+        except Exception as exc:
+            raise HTTPException(http_status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+        return Response(content=image_bytes, media_type="image/jpeg")
+
+    @protected.post("/api/mijia/accounts/{account_id}/verify/notification")
+    async def submit_notification_code(account_id: str) -> dict[str, Any]:
+        config = config_store.value
+        client = runtime.mijia_client(account_id)
+        if not client:
+            raise HTTPException(http_status.HTTP_400_BAD_REQUEST, "没有待处理的登录会话")
+        try:
+            await client.submit_notification()
+        except Exception as exc:
+            runtime.mark_needs_relogin(account_id)
+            raise HTTPException(http_status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+        idx = next((i for i, a in enumerate(config.mijia_accounts) if a.id == account_id), None)
+        if idx is not None:
+            config_store.save(config)
+        runtime._needs_relogin.discard(account_id)
+        await runtime.rebuild_workers()
+        return {"message": "验证登录成功", "authenticated": True}
 
     @protected.post("/api/mijia/accounts/{account_id}/logout")
     async def logout_mijia_account(account_id: str) -> dict[str, str]:

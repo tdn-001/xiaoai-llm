@@ -18,8 +18,6 @@ from app.models import AppConfig, EffectiveDeviceConfig, MijiaAccount
 
 log = logging.getLogger(__name__)
 
-# userprofile GET must never hang a worker loop; keep it well below the idle
-# poll interval so one stalled request cannot freeze question intake.
 USERPROFILE_TIMEOUT_SECONDS = 5
 USERPROFILE_UA = (
     "Mozilla/5.0 (Linux; Android 10; 000; wv) AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -28,13 +26,11 @@ USERPROFILE_UA = (
 )
 USERPROFILE_REFERER = "https://userprofile.mina.mi.com/dialogue-note/index.html"
 
+_CODE_CAPTCHA_REQUIRED = 87001
+_CODE_LOGIN_VERIFY = 70016
+
 
 def build_pass_token_file(user_id: str, pass_token: str, device_id: str | None = None) -> dict[str, str]:
-    """Token file understood by miservice's MiTokenStore/MiAccount.
-
-    With userId + passToken present, MiAccount.serviceLogin exchanges the
-    passToken for fresh service tokens without touching the stored password.
-    """
     return {
         "deviceId": device_id or "".join(random.sample(string.ascii_letters + string.digits, 16)).upper(),
         "userId": str(user_id),
@@ -42,13 +38,45 @@ def build_pass_token_file(user_id: str, pass_token: str, device_id: str | None =
     }
 
 
-class StableMiAccount(MiAccount):
-    """MiAccount with non-destructive SID refresh.
+def _detect_verification_type(response: dict[str, Any]) -> str | None:
+    code = response.get("code", 0)
+    captcha_url = response.get("captchaUrl") or ""
+    notification_url = response.get("notificationUrl") or ""
+    if code == _CODE_CAPTCHA_REQUIRED or captcha_url:
+        return "captcha"
+    if code == _CODE_LOGIN_VERIFY:
+        return "sms"
+    if notification_url:
+        return "sms"
+    return None
 
-    Xiaomi sometimes omits passToken when an existing passToken is exchanged
-    for a second service SID (notably xiaomiio). miservice-fork treats that as
-    a KeyError and deletes the otherwise valid token file.
-    """
+
+class LoginVerificationRequired(Exception):
+    def __init__(
+        self,
+        *,
+        ver_type: str,
+        captcha_url: str = "",
+        notification_url: str = "",
+        sid: str = "",
+        response: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(f"需要验证码: {ver_type}")
+        self.ver_type = ver_type
+        self.captcha_url = captcha_url
+        self.notification_url = notification_url
+        self.sid = sid
+        self.response = response or {}
+
+
+class StableMiAccount(MiAccount):
+    """MiAccount with non-destructive SID refresh and verification support."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._pending_sid: str = ""
+        self._pending_login_data: dict[str, Any] = {}
+        self._pending_response: dict[str, Any] = {}
 
     async def login(self, sid: str) -> bool:
         if not self.token:
@@ -69,7 +97,21 @@ class StableMiAccount(MiAccount):
                 }
                 response = await self._serviceLogin("serviceLoginAuth2", data)
                 if response["code"] != 0:
-                    raise RuntimeError("Xiaomi service login rejected")
+                    ver_type = _detect_verification_type(response)
+                    if ver_type:
+                        self._pending_sid = sid
+                        self._pending_login_data = data
+                        self._pending_response = response
+                        raise LoginVerificationRequired(
+                            ver_type=ver_type,
+                            captcha_url=response.get("captchaUrl") or "",
+                            notification_url=response.get("notificationUrl") or "",
+                            sid=sid,
+                            response=response,
+                        )
+                    raise RuntimeError(
+                        f"小米登录失败: {response.get('description', '未知错误')}"
+                    )
 
             self.token["userId"] = response.get("userId", self.token.get("userId"))
             pass_token = response.get("passToken") or self.token.get("passToken")
@@ -84,12 +126,102 @@ class StableMiAccount(MiAccount):
                 self.token_store.save_token(self.token)
                 os.chmod(self.token_store.token_path, 0o600)
             return True
+        except LoginVerificationRequired:
+            raise
         except Exception as exc:
-            # Keep the base passToken and already valid service tokens. A
-            # failure to obtain one SID must not log the user out everywhere.
             self.token.pop(sid, None)
             log.warning("小米服务 %s 授权失败: %s", sid, exc)
             return False
+
+    async def submit_captcha(self, code: str) -> bool:
+        sid = self._pending_sid
+        data = self._pending_login_data.copy()
+        if not sid or not data:
+            raise RuntimeError("没有待处理的验证码会话，请重新发起登录")
+        data["captCode"] = code
+        try:
+            response = await self._serviceLogin("serviceLoginAuth2", data)
+            self._pending_sid = ""
+            self._pending_login_data = {}
+            self._pending_response = {}
+            if response["code"] != 0:
+                ver_type = _detect_verification_type(response)
+                if ver_type:
+                    self._pending_sid = sid
+                    self._pending_login_data = data
+                    self._pending_response = response
+                    raise LoginVerificationRequired(
+                        ver_type=ver_type,
+                        captcha_url=response.get("captchaUrl") or "",
+                        notification_url=response.get("notificationUrl") or "",
+                        sid=sid,
+                        response=response,
+                    )
+                raise RuntimeError(
+                    f"验证码提交失败: {response.get('description', '未知错误')}"
+                )
+            self.token["userId"] = response.get("userId", self.token.get("userId"))
+            pass_token = response.get("passToken") or self.token.get("passToken")
+            if not self.token["userId"] or not pass_token:
+                raise RuntimeError("Xiaomi login response is missing account credentials")
+            self.token["passToken"] = pass_token
+            service_token = await self._securityTokenService(
+                response["location"], response["nonce"], response["ssecurity"]
+            )
+            self.token[sid] = (response["ssecurity"], service_token)
+            if self.token_store:
+                self.token_store.save_token(self.token)
+                os.chmod(self.token_store.token_path, 0o600)
+            return True
+        except LoginVerificationRequired:
+            raise
+        except Exception as exc:
+            self.token.pop(sid, None)
+            log.warning("验证码登录失败: %s", exc)
+            return False
+
+    async def submit_notification(self) -> bool:
+        sid = self._pending_sid
+        data = self._pending_login_data.copy()
+        if not sid or not data:
+            raise RuntimeError("没有待处理的验证会话，请重新发起登录")
+        try:
+            response = await self._serviceLogin("serviceLoginAuth2", data)
+            self._pending_sid = ""
+            self._pending_login_data = {}
+            self._pending_response = {}
+            if response["code"] != 0:
+                raise RuntimeError(
+                    f"验证登录失败: {response.get('description', '未知错误')}"
+                )
+            self.token["userId"] = response.get("userId", self.token.get("userId"))
+            pass_token = response.get("passToken") or self.token.get("passToken")
+            if not self.token["userId"] or not pass_token:
+                raise RuntimeError("Xiaomi login response is missing account credentials")
+            self.token["passToken"] = pass_token
+            service_token = await self._securityTokenService(
+                response["location"], response["nonce"], response["ssecurity"]
+            )
+            self.token[sid] = (response["ssecurity"], service_token)
+            if self.token_store:
+                self.token_store.save_token(self.token)
+                os.chmod(self.token_store.token_path, 0o600)
+            return True
+        except Exception as exc:
+            self.token.pop(sid, None)
+            log.warning("通知验证登录失败: %s", exc)
+            return False
+
+    async def fetch_captcha_image(self, captcha_url: str) -> bytes:
+        if captcha_url.startswith("/"):
+            captcha_url = "https://account.xiaomi.com" + captcha_url
+        headers = {"User-Agent": self.now_ua}
+        cookies: dict[str, str] = {"sdkVersion": "3.9", "deviceId": self.token["deviceId"]}
+        if "passToken" in self.token:
+            cookies["userId"] = self.token.get("userId", "")
+            cookies["passToken"] = self.token.get("passToken", "")
+        async with self.session.get(captcha_url, headers=headers, cookies=cookies, ssl=False) as r:
+            return await r.read()
 
 
 async def fetch_latest_question(
@@ -98,13 +230,6 @@ async def fetch_latest_question(
     source: str = "ubus",
     fallback: bool = True,
 ) -> dict[str, Any] | None:
-    """Fetch the newest ASR question for a device.
-
-    source="userprofile" uses a lightweight HTTPS conversation endpoint (no
-    UBus traffic); source="ubus" uses the device-scoped mibrain/nlp_result_get
-    UBus call. When userprofile fails and fallback is enabled, UBus is used for
-    that single poll.
-    """
     if source == "userprofile" and device.hardware:
         try:
             return await client.latest_question_userprofile(device)
@@ -126,6 +251,7 @@ class MijiaClient:
         self.miio: MiIOService | None = None
         self.authenticated = False
         self._last_credentials: MijiaAccount | None = None
+        self._pending_verification: dict[str, Any] | None = None
 
     @staticmethod
     def account_has_credentials(acct: MijiaAccount) -> bool:
@@ -134,11 +260,6 @@ class MijiaClient:
         return bool(acct.username and acct.password)
 
     async def login(self, credentials: MijiaAccount) -> MijiaAccount:
-        """Authenticate using the supplied credentials (not the full AppConfig).
-
-        The credentials object is returned (possibly with refreshed passToken)
-        so callers can persist it.
-        """
         await self.close()
         if not self.account_has_credentials(credentials):
             raise ValueError("请先填写小米账号和密码或 passToken")
@@ -147,16 +268,11 @@ class MijiaClient:
             else Path(f"data/mi-token-{credentials.id}.json")
         )
         token_path.parent.mkdir(parents=True, exist_ok=True)
-        # Session-wide cap so a stuck UBus/HTTP call can never freeze a worker;
-        # userprofile polls use a tighter per-request timeout.
         self.session = ClientSession(timeout=ClientTimeout(total=30))
         if credentials.login_type == "pass_token":
             token_file = build_pass_token_file(credentials.user_id, credentials.pass_token)
             token_path.write_text(json.dumps(token_file, indent=2), "utf-8")
             os.chmod(token_path, 0o600)
-            # Optional stored credentials are a recovery path if Xiaomi has
-            # rotated/revoked the pasted passToken. Direct passToken login still
-            # works when username/password are empty.
             self.account = StableMiAccount(
                 self.session, credentials.username, credentials.password, str(token_path)
             )
@@ -165,11 +281,17 @@ class MijiaClient:
                 self.session, credentials.username, credentials.password, str(token_path)
             )
 
-        if not await self.account.login("micoapi"):
-            await self.close()
-            if credentials.login_type == "pass_token":
-                raise RuntimeError("passToken 登录失败：令牌可能已失效，请重新获取后再试")
-            raise RuntimeError("小米账号登录失败，请检查账号、密码、地区或风控验证")
+        try:
+            await self.account.login("micoapi")
+        except LoginVerificationRequired as exc:
+            self._pending_verification = {
+                "ver_type": exc.ver_type,
+                "captcha_url": exc.captcha_url,
+                "notification_url": exc.notification_url,
+                "sid": exc.sid,
+            }
+            raise
+
         if credentials.login_type == "pass_token":
             token = getattr(self.account, "token", None)
             refreshed = token.get("passToken") if token else None
@@ -179,12 +301,79 @@ class MijiaClient:
         self.miio = MiIOService(self.account, credentials.region)
         self.authenticated = True
         self._last_credentials = credentials.model_copy()
+        self._pending_verification = None
         log.info(
             "米家账号 %s 登录成功（%s）",
             credentials.name or credentials.username or credentials.user_id or credentials.id,
             "passToken" if credentials.login_type == "pass_token" else "密码",
         )
         return credentials
+
+    async def submit_captcha(self, code: str) -> MijiaAccount:
+        if not self.account or not isinstance(self.account, StableMiAccount):
+            raise RuntimeError("没有待处理的登录会话，请重新发起登录")
+        try:
+            await self.account.submit_captcha(code)
+        except LoginVerificationRequired as exc:
+            self._pending_verification = {
+                "ver_type": exc.ver_type,
+                "captcha_url": exc.captcha_url,
+                "notification_url": exc.notification_url,
+                "sid": exc.sid,
+            }
+            raise
+        creds = self._last_credentials
+        if creds and creds.login_type == "pass_token":
+            token = getattr(self.account, "token", None)
+            refreshed = token.get("passToken") if token else None
+            if refreshed:
+                creds.pass_token = refreshed
+        self.mina = MiNAService(self.account)
+        self.miio = MiIOService(self.account, creds.region if creds else "cn")
+        self.authenticated = True
+        self._pending_verification = None
+        log.info("米家账号验证码登录成功")
+        return creds
+
+    async def submit_notification(self) -> MijiaAccount:
+        if not self.account or not isinstance(self.account, StableMiAccount):
+            raise RuntimeError("没有待处理的登录会话，请重新发起登录")
+        await self.account.submit_notification()
+        creds = self._last_credentials
+        if creds and creds.login_type == "pass_token":
+            token = getattr(self.account, "token", None)
+            refreshed = token.get("passToken") if token else None
+            if refreshed:
+                creds.pass_token = refreshed
+        self.mina = MiNAService(self.account)
+        self.miio = MiIOService(self.account, creds.region if creds else "cn")
+        self.authenticated = True
+        self._pending_verification = None
+        log.info("米家账号通知验证登录成功")
+        return creds
+
+    async def fetch_captcha_image(self) -> bytes:
+        if not self.account or not isinstance(self.account, StableMiAccount):
+            raise RuntimeError("没有待处理的验证码会话")
+        ver = self._pending_verification
+        if not ver or not ver.get("captcha_url"):
+            raise RuntimeError("当前不需要验证码")
+        return await self.account.fetch_captcha_image(ver["captcha_url"])
+
+    async def auto_reconnect(self, credentials: MijiaAccount | None = None) -> bool:
+        creds = credentials or self._last_credentials
+        if not creds:
+            return False
+        log.info("米家账号 %s 自动重新登录...", creds.name or creds.username or creds.id)
+        try:
+            await self.login(creds)
+            return True
+        except LoginVerificationRequired:
+            log.warning("米家账号自动重连需要验证码，无法自动完成")
+            return False
+        except Exception as exc:
+            log.warning("米家账号自动重连失败: %s", exc)
+            return False
 
     async def close(self) -> None:
         if self.session and not self.session.closed:
@@ -195,6 +384,7 @@ class MijiaClient:
         self.miio = None
         self.authenticated = False
         self._last_credentials = None
+        self._pending_verification = None
 
     async def discover_devices(self) -> list[dict[str, Any]]:
         self._require_login()
@@ -203,9 +393,6 @@ class MijiaClient:
         try:
             miio_devices = await self.miio.device_list(name="full") or []
         except Exception as exc:
-            # MiNA already contains every field required to bind and control a
-            # speaker. MIoT is enrichment only and may be unavailable for some
-            # passTokens/regions.
             log.warning("MIoT 设备列表获取失败，使用 MiNA 设备列表继续: %s", exc)
         miio_by_did = {str(item.get("did")): item for item in miio_devices}
         devices: list[dict[str, Any]] = []
@@ -247,17 +434,6 @@ class MijiaClient:
         }
 
     async def latest_question_userprofile(self, device: EffectiveDeviceConfig) -> dict[str, Any] | None:
-        """Read the newest conversation record via the userprofile endpoint.
-
-        This is a plain HTTPS GET against userprofile.mina.mi.com; it does not
-        touch the device UBus channel. Records are keyed by hardware, so two
-        bound speakers of the same model share records (the worker layer
-        de-duplicates by claim).
-
-        The cookie `deviceId` MUST be the speaker's MiNA deviceID: the
-        conversation history is archived per device, and passing the passport
-        deviceId returns an empty record list.
-        """
         self._require_login()
         token = self.account.token if self.account else None
         service_token = (token or {}).get("micoapi", [None, None])[1]
@@ -307,7 +483,6 @@ class MijiaClient:
         }
 
     async def fetch_native_answer(self, device: EffectiveDeviceConfig) -> str:
-        """Optional UBus nlp_result_get read, for logging the native reply."""
         record = await self.latest_question_ubus(device)
         return str(record.get("native_answer") or "") if record else ""
 

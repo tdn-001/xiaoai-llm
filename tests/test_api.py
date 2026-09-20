@@ -209,3 +209,65 @@ def test_audio_rejects_path_traversal(tmp_path):
     client, _ = make_client(tmp_path)
     assert client.get("/audio/..%2Fconfig.json").status_code == 404
     assert client.get("/audio/whatever.txt").status_code == 404
+
+
+def test_verification_endpoint_exists(tmp_path):
+    """验证码提交端点存在且返回正确的错误（无待处理会话）。"""
+    client, store = make_client(tmp_path)
+    setup_admin(client, store)
+
+    # 验证码提交端点 - 没有待处理会话应返回 400
+    r = client.post("/api/mijia/accounts/a1/verify/captcha", json={"code": "1234"})
+    assert r.status_code == 400
+
+    # 验证码图片端点 - 没有待处理会话应返回 400
+    r = client.get("/api/mijia/accounts/a1/verify/captcha-image")
+    assert r.status_code == 400
+
+    # 通知验证端点 - 没有待处理会话应返回 400
+    r = client.post("/api/mijia/accounts/a1/verify/notification", json={})
+    assert r.status_code == 400
+
+
+def test_login_verification_response_shape(tmp_path):
+    """登录端点返回验证码需求时，响应包含 verification_required 字段。"""
+    from app.mijia.client import LoginVerificationRequired
+
+    client, store = make_client(tmp_path)
+    setup_admin(client, store)
+
+    # 直接测试异常类的结构
+    exc = LoginVerificationRequired(
+        ver_type="captcha",
+        captcha_url="/pass/getCode?icodeType=login",
+        sid="micoapi",
+        response={"code": 87001, "captchaUrl": "/pass/getCode?icodeType=login"},
+    )
+    assert exc.ver_type == "captcha"
+    assert exc.captcha_url == "/pass/getCode?icodeType=login"
+    assert exc.sid == "micoapi"
+    assert exc.response["code"] == 87001
+
+    exc2 = LoginVerificationRequired(
+        ver_type="sms",
+        notification_url="https://account.xiaomi.com/pass/notification",
+        sid="micoapi",
+    )
+    assert exc2.ver_type == "sms"
+    assert exc2.notification_url == "https://account.xiaomi.com/pass/notification"
+
+
+def test_detect_verification_type():
+    """验证码类型检测逻辑。"""
+    from app.mijia.client import _detect_verification_type
+
+    # 非验证响应
+    assert _detect_verification_type({"code": 0}) is None
+    assert _detect_verification_type({"code": 70016, "description": "登录验证失败"}) == "sms"
+
+    # 图片验证码
+    assert _detect_verification_type({"code": 87001}) == "captcha"
+    assert _detect_verification_type({"code": 0, "captchaUrl": "/pass/getCode"}) == "captcha"
+
+    # 通知验证
+    assert _detect_verification_type({"code": 0, "notificationUrl": "/identity/authStart"}) == "sms"

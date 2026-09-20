@@ -61,6 +61,25 @@ class DeviceWorker:
             self.task = None
         self.stats["listening"] = False
 
+    async def _try_auto_reconnect(self) -> bool:
+        """Attempt to auto-reconnect a dropped session without user interaction."""
+        config = self.manager.config_store.value
+        acct = next((a for a in config.mijia_accounts if a.id == self.account_id), None)
+        if not acct:
+            return False
+        client = self.manager.mijia_client(self.account_id)
+        if not client:
+            return False
+        try:
+            reconnected = await client.auto_reconnect(acct)
+            if reconnected:
+                self.manager._needs_relogin.discard(self.account_id)
+                logger.info("米家账号 %s 自动重连成功", acct.name or acct.id)
+                return True
+        except Exception as exc:
+            logger.debug("自动重连失败（需要验证码或账号异常）: %s", exc)
+        return False
+
     async def run(self) -> None:
         self.stats["listening"] = True
         logger.info("开始监听设备 %s", self.did, extra={"device": self.did})
@@ -76,9 +95,13 @@ class DeviceWorker:
                 self.stats["consecutive_errors"] += 1
                 self.stats["last_error"] = str(exc)
                 if "未登录" in str(exc):
-                    interval = 15
                     self.manager.needs_relogin = True
-                    logger.warning("米家账号未登录，暂停监听直至重新登录: %s", exc, extra={"device": self.did})
+                    logger.warning("米家账号未登录，尝试自动重连: %s", exc, extra={"device": self.did})
+                    reconnected = await self._try_auto_reconnect()
+                    if reconnected:
+                        interval = 2
+                    else:
+                        interval = 15
                 else:
                     logger.error("设备 %s 轮询失败: %s", self.did, exc, extra={"device": self.did})
             await asyncio.sleep(interval)

@@ -109,6 +109,31 @@
         <button id="btn-cancel-account" class="btn">取消</button>
       </div>
     </div>
+    <div class="card hidden" id="verification-card">
+      <h3>安全验证</h3>
+      <p class="muted" id="verification-hint">小米需要验证身份以完成登录。</p>
+      <div id="verification-captcha-section" class="hidden">
+        <p class="muted">请输入图片中的验证码：</p>
+        <img id="captcha-image" class="captcha-img" alt="验证码图片">
+        <div class="form-grid">
+          <label>验证码<input id="captcha-code" type="text" maxlength="10" autocomplete="off"></label>
+        </div>
+        <div class="btn-row">
+          <button id="btn-submit-captcha" class="btn primary">提交验证码</button>
+          <button id="btn-refresh-captcha" class="btn">刷新验证码</button>
+          <button id="btn-cancel-verification" class="btn">取消</button>
+        </div>
+      </div>
+      <div id="verification-sms-section" class="hidden">
+        <p class="muted">请在浏览器中打开以下链接完成短信验证，完成后点击"我已完成验证"：</p>
+        <a id="notification-link" href="#" target="_blank" class="verification-link"></a>
+        <div class="btn-row">
+          <button id="btn-confirm-notification" class="btn primary">我已完成验证</button>
+          <button id="btn-cancel-verification" class="btn">取消</button>
+        </div>
+      </div>
+      <p class="error" id="verification-error"></p>
+    </div>
   </section>
 
   <section data-screen="devices" class="screen hidden">

@@ -459,13 +459,82 @@ async function accountAction(id, action) {
   }
   if (action === "login") {
     try {
-      await POST(`/api/mijia/accounts/${id}/login`, {});
-      toast("登录成功", "ok");
-      await refreshAccounts();
+      const resp = await POST(`/api/mijia/accounts/${id}/login`, {});
+      if (resp.verification_required) {
+        showVerificationCard(id, resp);
+      } else {
+        toast("登录成功", "ok");
+        await refreshAccounts();
+      }
     } catch (err) {
       toast(err.message, "error");
     }
   }
+}
+
+let currentVerificationAccountId = null;
+
+function showVerificationCard(accountId, verInfo) {
+  currentVerificationAccountId = accountId;
+  const card = $("#verification-card");
+  card.classList.remove("hidden");
+  $("#verification-error").textContent = "";
+
+  if (verInfo.ver_type === "captcha") {
+    $("#verification-captcha-section").classList.remove("hidden");
+    $("#verification-sms-section").classList.add("hidden");
+    loadCaptchaImage(accountId);
+  } else {
+    $("#verification-captcha-section").classList.add("hidden");
+    $("#verification-sms-section").classList.remove("hidden");
+    const link = $("#notification-link");
+    link.href = verInfo.notification_url || "#";
+    link.textContent = verInfo.notification_url || "（链接不可用）";
+  }
+}
+
+async function loadCaptchaImage(accountId) {
+  const img = $("#captcha-image");
+  img.src = `/api/mijia/accounts/${accountId}/verify/captcha-image?_t=${Date.now()}`;
+  img.onerror = () => { img.alt = "验证码加载失败"; };
+}
+
+async function submitCaptchaCode() {
+  if (!currentVerificationAccountId) return;
+  const code = $("#captcha-code").value.trim();
+  if (!code) return toast("请输入验证码", "error");
+  try {
+    const resp = await POST(`/api/mijia/accounts/${currentVerificationAccountId}/verify/captcha`, { code });
+    if (resp.verification_required) {
+      showVerificationCard(currentVerificationAccountId, resp);
+      toast("验证码错误，请重试", "error");
+    } else {
+      toast("登录成功", "ok");
+      hideVerificationCard();
+      await refreshAccounts();
+    }
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function submitNotificationVerification() {
+  if (!currentVerificationAccountId) return;
+  try {
+    await POST(`/api/mijia/accounts/${currentVerificationAccountId}/verify/notification`, {});
+    toast("登录成功", "ok");
+    hideVerificationCard();
+    await refreshAccounts();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+function hideVerificationCard() {
+  currentVerificationAccountId = null;
+  $("#verification-card").classList.add("hidden");
+  $("#captcha-code").value = "";
+  $("#verification-error").textContent = "";
 }
 
 async function saveAccountForm() {
@@ -953,6 +1022,17 @@ function bindEvents() {
     $("#account-form-card").classList.add("hidden");
   });
   $("#acct-login-type").addEventListener("change", updateAccountFields);
+  $("#btn-submit-captcha").addEventListener("click", submitCaptchaCode);
+  $("#btn-refresh-captcha").addEventListener("click", () => {
+    if (currentVerificationAccountId) loadCaptchaImage(currentVerificationAccountId);
+  });
+  $("#btn-confirm-notification").addEventListener("click", submitNotificationVerification);
+  $$("#verification-card #btn-cancel-verification").forEach((btn) =>
+    btn.addEventListener("click", hideVerificationCard)
+  );
+  $("#captcha-code").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") submitCaptchaCode();
+  });
 
   $("#device-account-id").addEventListener("change", (e) => {
     selectedBindingAccount = e.target.value;

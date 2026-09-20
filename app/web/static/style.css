@@ -180,6 +180,27 @@ textarea { resize: vertical; }
 .badge.untested, .badge.unsupported { color: var(--danger); border-color: var(--danger); }
 .badge.offline { color: var(--danger); }
 
+.captcha-img {
+  display: block;
+  max-width: 200px;
+  margin: 10px 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.verification-link {
+  display: block;
+  margin: 10px 0;
+  padding: 10px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  word-break: break-all;
+  font-size: 0.85em;
+  color: var(--accent);
+}
+.verification-link:hover { text-decoration: underline; }
+
 .device-config {
   border: 1px solid var(--line);
   border-radius: 10px;
