@@ -238,6 +238,10 @@
           </datalist>
         </label>
         <label>EdgeTTS 生成超时（秒）<input id="tts-timeout" type="number" min="5" max="120"></label>
+        <label>播报语速
+          <input id="tts-speed" type="range" min="0.5" max="2.0" step="0.1" value="1.0">
+          <span id="tts-speed-label">1.0x</span>
+        </label>
         <label>失败时降级到米家 TTS
           <select id="tts-fallback"><option value="true">开启</option><option value="false">关闭</option></select>
         </label>

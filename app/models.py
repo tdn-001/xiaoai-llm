@@ -70,6 +70,7 @@ class LLMProfile(BaseModel):
 class TTSConfig(BaseModel):
     default_provider: Literal["mijia", "edge_tts"] = "mijia"
     edge_voice: str = "zh-CN-XiaoxiaoNeural"
+    speed: float = Field(default=1.0, ge=0.5, le=2.0)
     timeout_seconds: float = Field(default=30, ge=5, le=120)
     fallback_to_mijia: bool = True
     error_message: str = "网络异常，请稍后再试"
@@ -126,6 +127,7 @@ class DeviceOverride(BaseModel):
     wake_word_mode: Literal["prefix", "contains"] | None = None
     tts_provider: Literal["mijia", "edge_tts"] | None = None
     edge_voice: str | None = None
+    speed: float | None = None
     context_enabled: bool | None = None
     web_search_enabled: bool | None = None
     session_timeout_minutes: int | None = Field(default=None, ge=1, le=1440)
@@ -193,6 +195,7 @@ class EffectiveDeviceConfig(BaseModel):
     wake_word_mode: Literal["prefix", "contains"]
     tts_provider: Literal["mijia", "edge_tts"]
     edge_voice: str
+    speed: float
     context_enabled: bool
     web_search_enabled: bool
     session_timeout_minutes: int
@@ -222,6 +225,7 @@ def resolve_device(config: AppConfig, did: str) -> EffectiveDeviceConfig:
         wake_word_mode=device.wake_word_mode or defaults.wake_word_mode,
         tts_provider=device.tts_provider or config.tts.default_provider,
         edge_voice=device.edge_voice or config.tts.edge_voice,
+        speed=device.speed if device.speed is not None else config.tts.speed,
         context_enabled=(device.context_enabled if device.context_enabled is not None else defaults.context_enabled),
         web_search_enabled=(
             device.web_search_enabled

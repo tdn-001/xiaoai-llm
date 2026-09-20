@@ -42,7 +42,8 @@ class TTSService:
             raise ValueError("EdgeTTS 需要配置音箱可访问的局域网地址")
         token = secrets.token_urlsafe(18)
         path = self.audio_dir / f"{token}.mp3"
-        await edge_tts.Communicate(text, device.edge_voice).save(str(path))
+        rate = f"{(device.speed - 1.0) * 100:+.0f}%"
+        await edge_tts.Communicate(text, device.edge_voice, rate=rate).save(str(path))
         url = f"{config.web.public_base_url.rstrip('/')}/audio/{path.name}"
         await mijia.play_url(device, url)
 
