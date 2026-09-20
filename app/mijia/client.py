@@ -183,19 +183,49 @@ class StableMiAccount(MiAccount):
             return False
 
     async def submit_notification(self) -> bool:
+        """Re-run full login after user completed browser-based identity verification.
+
+        The notificationUrl verification is tied to the browser session. After the
+        user completes verification, we restart the full login flow (serviceLogin
+        → serviceLoginAuth2) which should now succeed.
+        """
         sid = self._pending_sid
-        data = self._pending_login_data.copy()
-        if not sid or not data:
+        if not sid:
             raise RuntimeError("没有待处理的验证会话，请重新发起登录")
         try:
-            response = await self._serviceLogin("serviceLoginAuth2", data)
             self._pending_sid = ""
             self._pending_login_data = {}
             self._pending_response = {}
+
+            response = await self._serviceLogin(f"serviceLogin?sid={sid}&_json=true")
             if response["code"] != 0:
-                raise RuntimeError(
-                    f"验证登录失败: {response.get('description', '未知错误')}"
-                )
+                data = {
+                    "_json": "true",
+                    "qs": response["qs"],
+                    "sid": response["sid"],
+                    "_sign": response["_sign"],
+                    "callback": response["callback"],
+                    "user": self.username,
+                    "hash": hashlib.md5(self.password.encode()).hexdigest().upper(),
+                }
+                response = await self._serviceLogin("serviceLoginAuth2", data)
+                if response["code"] != 0:
+                    ver_type = _detect_verification_type(response)
+                    if ver_type or (not response.get("location") and response.get("notificationUrl")):
+                        self._pending_sid = sid
+                        self._pending_login_data = data
+                        self._pending_response = response
+                        raise LoginVerificationRequired(
+                            ver_type=ver_type or "sms",
+                            captcha_url=response.get("captchaUrl") or "",
+                            notification_url=response.get("notificationUrl") or "",
+                            sid=sid,
+                            response=response,
+                        )
+                    raise RuntimeError(
+                        f"验证登录失败: {response.get('description', '未知错误')}"
+                    )
+
             self.token["userId"] = response.get("userId", self.token.get("userId"))
             pass_token = response.get("passToken") or self.token.get("passToken")
             if not self.token["userId"] or not pass_token:
